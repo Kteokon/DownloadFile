@@ -4,20 +4,24 @@ import android.net.Uri;
 
 import java.io.File;
 
-public class LyricsFile {
+public class MyMusic {
     private final long _id;
     private final Uri uri;
     private final String name;
+    private final int duration;
 
-    public LyricsFile(long _id, Uri uri, String name) {
+    public MyMusic(long _id, Uri uri, String name, int duration) {
         this._id = _id;
         this.uri = uri;
         this.name = name;
+        this.duration = duration;
     }
 
     public long getId() { return _id; }
 
-    public Uri getUri() { return uri; }
+    public Uri getUri() {
+        return uri;
+    }
 
     public String getPath() {
         File file = new File(this.uri.getPath());
@@ -28,5 +32,9 @@ public class LyricsFile {
 
     public String getName() {
         return name;
+    }
+
+    public String getDuration() {
+        return Integer.toString(duration);
     }
 }

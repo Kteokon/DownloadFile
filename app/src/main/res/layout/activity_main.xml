@@ -36,4 +36,11 @@
         android:text="Выбрать файл"
         android:onClick="loadFile" />
 
+    <Button
+        android:id="@+id/cloudButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Загрузить с облака"
+        android:onClick="loadFile" />
+
 </LinearLayout>

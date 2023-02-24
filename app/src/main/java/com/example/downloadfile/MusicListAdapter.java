@@ -19,10 +19,10 @@ import java.util.ArrayList;
 
 public class MusicListAdapter extends BaseAdapter {
     Context ctx;
-    ArrayList<Music> files;
+    ArrayList<MyMusic> files;
     MediaPlayer music;
 
-    public MusicListAdapter(Context ctx, ArrayList<Music> files) {
+    public MusicListAdapter(Context ctx, ArrayList<MyMusic> files) {
         this.ctx = ctx;
         this.files = files;
     }
@@ -44,7 +44,7 @@ public class MusicListAdapter extends BaseAdapter {
 
     @Override
     public View getView(int position, View convertView, ViewGroup parent) {
-        Music m = files.get(position);
+        MyMusic m = files.get(position);
 
         music = new MediaPlayer();
 

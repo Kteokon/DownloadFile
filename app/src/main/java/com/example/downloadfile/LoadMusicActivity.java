@@ -1,5 +1,6 @@
 package com.example.downloadfile;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.app.Activity;
@@ -7,35 +8,53 @@ import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.Intent;
 import android.database.Cursor;
-import android.media.AudioManager;
-import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.os.storage.StorageManager;
-import android.os.storage.StorageVolume;
-import android.provider.DocumentsContract;
-import android.provider.DocumentsProvider;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Log;
-import android.webkit.MimeTypeMap;
+import android.widget.Button;
 import android.widget.ListView;
 
-import java.io.BufferedReader;
+import com.google.android.exoplayer2.DefaultLoadControl;
+import com.google.android.exoplayer2.DefaultRenderersFactory;
+import com.google.android.exoplayer2.ExoPlayer;
+import com.google.android.exoplayer2.MediaItem;
+import com.google.android.exoplayer2.SimpleExoPlayer;
+import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
+import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.source.MediaSourceFactory;
+import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
+import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory;
+import com.google.android.exoplayer2.util.Util;
+import com.google.android.gms.tasks.OnFailureListener;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.firebase.storage.FileDownloadTask;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.ListResult;
+import com.google.firebase.storage.StorageReference;
+import com.google.gson.Gson;
+
+import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
 public class LoadMusicActivity extends AppCompatActivity {
-
+    Button playButton;
     ListView lv;
     FileListAdapter adapter;
+    ExoPlayer exoPlayer;
+    FirebaseStorage storage;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -50,7 +69,19 @@ public class LoadMusicActivity extends AppCompatActivity {
             musicList();
         }
         else {
-            lyricsFilesListStAccFr();
+            if (button.equals("file")) {
+                lyricsFilesListStAccFr();
+            }
+            else {
+                try {
+                    playButton = findViewById(R.id.playButton);
+                    getFilesFirebase();
+                } catch (IOException e) {
+
+                    Log.d("mytag", "Some error");
+                    e.printStackTrace();
+                }
+            }
         }
     }
 
@@ -60,7 +91,7 @@ public class LoadMusicActivity extends AppCompatActivity {
         //String path = MediaStore.Files.getContentUri("external").getPath();
         //Uri uri = MediaStore.Files.getContentUri("external");
 
-        ArrayList<Music> musicList = new ArrayList<>();
+        ArrayList<MyMusic> musicList = new ArrayList<>();
 
         Uri collection;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -69,21 +100,16 @@ public class LoadMusicActivity extends AppCompatActivity {
             collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
         }
 
-// every column, although that is huge waste, you probably need
-// BaseColumns.DATA (the path) only.
-        //String[] projection = null;
-
         String[] projection = new String[] {
                 MediaStore.Audio.Media._ID,
                 MediaStore.Audio.Media.DISPLAY_NAME,
                 MediaStore.Audio.Media.DURATION
         };
 
-// exclude media files, they would be here also.
         String selection = MediaStore.Audio.Media.IS_MUSIC;
-        String[] selectionArgs = null; // there is no ? in selection so null here
+        String[] selectionArgs = null;
 
-        String sortOrder = null; // unordered
+        String sortOrder = null;
         ContentResolver cr = this.getContentResolver();
 
         try (Cursor cursor = cr.query(
@@ -93,7 +119,6 @@ public class LoadMusicActivity extends AppCompatActivity {
                 selectionArgs,
                 sortOrder
         )) {
-            // Cache column indices.
             int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
             int nameColumn =
                     cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME);
@@ -101,16 +126,13 @@ public class LoadMusicActivity extends AppCompatActivity {
                     cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
 
             while (cursor.moveToNext()) {
-                // Get values of columns for a given video.
                 long id = cursor.getLong(idColumn);
                 Uri contentUri = ContentUris.withAppendedId(
                         MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
                 String name = cursor.getString(nameColumn);
                 int duration = cursor.getInt(durationColumn);
 
-                // Stores column values and the contentUri in a local object
-                // that represents the media file.
-                musicList.add(new Music(id, contentUri, name, duration));
+                musicList.add(new MyMusic(id, contentUri, name, duration));
             }
         }
 
@@ -139,7 +161,7 @@ public class LoadMusicActivity extends AppCompatActivity {
 
     // Не видит текстовые файлы
     private void lyricsFilesListMSt() {
-        ArrayList<LyricsFile> filesList = new ArrayList<>();
+        ArrayList<MyLyricsFile> filesList = new ArrayList<>();
 
         Uri collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL);
         String[] projection = null;
@@ -166,7 +188,7 @@ public class LoadMusicActivity extends AppCompatActivity {
                 Uri contentUri = ContentUris.withAppendedId(
                         MediaStore.Files.getContentUri("external"), id);
                 String name = cursor.getString(nameColumn);
-                filesList.add(new LyricsFile(id, contentUri, name));
+                filesList.add(new MyLyricsFile(id, contentUri, name));
             }
         }
 
@@ -177,7 +199,7 @@ public class LoadMusicActivity extends AppCompatActivity {
     }
 
     // Не совсем подходит, т.к. пользователи обычно складируют файлы в Music, а не в далёкой папке приложения
-    private void lyricsFilesListGExtFD() {
+    private void lyricsFilesListGetFD() {
         File dir = this.getExternalFilesDir(null);
         Log.d("mytag", dir.getAbsolutePath());
     }
@@ -194,7 +216,7 @@ public class LoadMusicActivity extends AppCompatActivity {
 
         // Optionally, specify a URI for the file that should appear in the
         // system file picker when it loads.
-        //intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, "/external/file/"); //
+//        intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, "/external/file/");
 
         startActivityForResult(intent, PICK_FILE);
     }
@@ -209,10 +231,21 @@ public class LoadMusicActivity extends AppCompatActivity {
 
             Uri uri = null;
 
-//            if(resultData != null) {
-//                uri = resultData.getData();
+            if(resultData != null) {
+                uri = resultData.getData();
+
+                String userAgent = Util.getUserAgent(this, "Exo");
+
+                exoPlayer = new ExoPlayer.Builder(getApplicationContext()).build();
+                MediaItem item = MediaItem.fromUri(uri);
+                exoPlayer.setMediaItem(item);
+                exoPlayer.prepare();
+                exoPlayer.play();
+
 //                File f = new File(uri.getPath());
 //                try {
+//                    Log.d("mytag", f.getName());
+
 //                    InputStream in = getContentResolver().openInputStream(uri);
 //
 //                    BufferedReader r = new BufferedReader(new InputStreamReader(in));
@@ -222,44 +255,24 @@ public class LoadMusicActivity extends AppCompatActivity {
 //                    }
 //                    String content = total.toString();
 //                    Log.d("mytag", content);
-//                }catch (Exception e) {
 //
-//                }
+//                    String mimeType = null;
+//                    if (ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) {
+//                        ContentResolver cr = this.getContentResolver();
+//                        mimeType = cr.getType(uri);
+//                        Log.d("mytag", "we're here");
+//                    } else {
+//                        String fileExtension = MimeTypeMap.getFileExtensionFromUrl(uri
+//                                .toString());
+//                        mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(
+//                                fileExtension.toLowerCase());
+//                        Log.d("mytag", "else");
+//                    }
+//                    Log.d("mytag", mimeType);
 
-//                try {
-//                    File f = new File(text);
-//                    Log.d("mytag", f.getName());
-//                    FileInputStream is = new FileInputStream(f); // Fails on this line
-//                    int size = is.available();
-//                    byte[] buffer = new byte[size];
-//                    is.read(buffer);
-//                    is.close();
-//                    text = new String(buffer);
-//                    Log.d("mytag", text);
-//                } catch (IOException e) {
-//                    // TODO Auto-generated catch block
-//                    e.printStackTrace();
+//                } catch (Exception e) {
+//                    Log.d("mytag", "some error");
 //                }
-
-            MediaPlayer music = new MediaPlayer();
-            if (resultData != null) {
-                uri = resultData.getData();
-                File f = new File(uri.toString());
-                Log.d("mytag", uri.toString());
-                Uri uri2 = Uri.parse(uri.toString());
-                try {
-                    if (music.isPlaying()){
-                        music.stop();
-                        music = new MediaPlayer();
-                    }
-                    music.setAudioStreamType(AudioManager.STREAM_MUSIC);
-                    music.setDataSource(this, uri2);
-                    music.prepare();
-                    music.start();
-                } catch (IOException e) {
-                    Log.d("mytag", "error: " + e.getLocalizedMessage());
-                    e.printStackTrace();
-                }
             }
         }
     }
@@ -274,23 +287,13 @@ public class LoadMusicActivity extends AppCompatActivity {
             // "if there's anything to look at, look at it" conditionals.
             if (cursor != null && cursor.moveToFirst()) {
 
-                // Note it's called "Display Name". This is
-                // provider-specific, and might not necessarily be the file name.
                 String displayName = cursor.getString(
                         cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME));
                 Log.i("mytag", "Display Name: " + displayName);
 
                 int sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE);
-                // If the size is unknown, the value stored is null. But because an
-                // int can't be null, the behavior is implementation-specific,
-                // and unpredictable. So as
-                // a rule, check if it's null before assigning to an int. This will
-                // happen often: The storage API allows for remote files, whose
-                // size might not be locally known.
                 String size = null;
                 if (!cursor.isNull(sizeIndex)) {
-                    // Technically the column stores an int, but cursor.getString()
-                    // will do the conversion automatically.
                     size = cursor.getString(sizeIndex);
                 } else {
                     size = "Unknown";
@@ -369,5 +372,116 @@ public class LoadMusicActivity extends AppCompatActivity {
 //        for (int i = 0; i < lyricsList.size(); i++) {
 //            Log.d("mytag", lyricsList.get(i).getPath() + " " + lyricsList.get(i).getName());
 //        }
+    }
+
+    private void getFilesGoogleDrive() {
+        String fileId = "1AGYaKRvNk1jiqGOZJE6jg71BwGs2DC0B";
+        String theKey = "AIzaSyCOtrNRh8aQ4W05AbrFbFr99XxLnkQiX-E";
+        //GoogleDriveResponse response = null;
+        try {
+            URL url = new URL("https://www.googleapis.com/drive/v3/files/" + fileId);
+            HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
+            urlConnection.setRequestProperty("x-goog-api-key", theKey);
+            urlConnection.setDoOutput(true);
+
+            OutputStream stream = urlConnection.getOutputStream();
+            String postData = "";
+            stream.write(postData.getBytes());
+
+            InputStream inputStream = urlConnection.getInputStream();
+            InputStreamReader reader = new InputStreamReader(inputStream);
+
+            Gson gson = new Gson();
+            //response = gson.fromJson(reader, GoogleDriveResponse.class);
+            urlConnection.disconnect();
+
+            InputStream in = new BufferedInputStream(urlConnection.getInputStream());
+            urlConnection.setDoOutput(true);
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        String res = "";
+    }
+
+    private void getFilesFirebase() throws IOException {
+        boolean download = true;
+        if (download) {
+            DownloadMusicTask task = new DownloadMusicTask();
+            task.execute();
+        }
+
+//        StorageReference gsReference = storage.getReferenceFromUrl(spaceRef.getRoot().toString());
+//
+//        spaceRef.getDownloadUrl().addOnSuccessListener(new OnSuccessListener<Uri>() {
+//            @Override
+//            public void onSuccess(Uri uri) {
+//                Log.d("mytag", "Success " + uri.toString());
+//            }
+//        }).addOnFailureListener(new OnFailureListener() {
+//            @Override
+//            public void onFailure(@NonNull Exception exception) {
+//                Log.d("mytag", "Fail");
+//            }
+//        });
+
+//        File localFile = File.createTempFile("music", "");
+//        spaceRef.getFile(localFile).addOnSuccessListener(new OnSuccessListener<FileDownloadTask.TaskSnapshot>() {
+//            @Override
+//            public void onSuccess(FileDownloadTask.TaskSnapshot taskSnapshot) {
+//                Log.d("mytag", "Success");
+//            }
+//        }).addOnFailureListener(new OnFailureListener() {
+//            @Override
+//            public void onFailure(@NonNull Exception exception) {
+//                Log.d("mytag", "Fail");
+//            }
+//        });
+    }
+
+    class DownloadMusicTask extends AsyncTask<Void, Void, Void> {
+        @Override
+        protected Void doInBackground(Void... voids) {
+            List<File> files = new ArrayList<>();
+            storage = FirebaseStorage.getInstance();
+            StorageReference listRef = storage.getReference().child("music");
+
+            listRef.listAll().addOnSuccessListener(new OnSuccessListener<ListResult>() {
+                @Override
+                public void onSuccess(ListResult listResult) {
+                    Log.d("mytag", "Success");
+                    for (StorageReference item : listResult.getItems()) {
+                        Log.d("mytag", "Item: " + item.getName());
+
+                        File rootPath = new File(Environment.getExternalStorageDirectory(), "Music");
+                        if(!rootPath.exists()) {
+                            rootPath.mkdirs();
+                        }
+
+                        final File localFile = new File(rootPath, item.getName());
+
+                        item.getFile(localFile).addOnSuccessListener(new OnSuccessListener<FileDownloadTask.TaskSnapshot>() {
+                            @Override
+                            public void onSuccess(FileDownloadTask.TaskSnapshot taskSnapshot) {
+                                Log.d("mytag", localFile.getName() + " " + localFile.getPath());
+                                files.add(localFile);
+                            }
+                        }).addOnFailureListener(new OnFailureListener() {
+                            @Override
+                            public void onFailure(@NonNull Exception e) {
+                                Log.d("mytag", "Fail while downloading");
+                            }
+                        });
+                    }
+                }
+            })
+            .addOnFailureListener(new OnFailureListener() {
+                @Override
+                public void onFailure(@NonNull Exception e) {
+                    Log.d("mytag", "Fail while accessing to the folder");
+                }
+            });
+            return null;
+        }
     }
 }

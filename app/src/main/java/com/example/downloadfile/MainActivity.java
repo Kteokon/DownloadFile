@@ -53,7 +53,12 @@ public class MainActivity extends AppCompatActivity {
             intent.putExtra("button", "music");
         }
         else {
-            intent.putExtra("button", "file");
+            if (v.getId() == R.id.fileButton){
+                intent.putExtra("button", "file");
+            }
+            else {
+                intent.putExtra("button", "cloud");
+            }
         }
         startActivity(intent);
     }
